@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { AuthProvider, useAuth, ADMIN_EMAIL } from "@/lib/auth";
+import { AuthProvider, useAuth, ADMIN_EMAIL } from "@/lib/auth.tsx";
 import AuthPage from "@/components/auth/AuthPage";
 import AdminPanel from "@/components/admin/AdminPanel";
 import Header from "@/components/Header";

@@ -3,7 +3,7 @@ import { Zap, ChevronDown, Sun, Moon, Crown, LogOut, Shield } from "lucide-react
 import logoIcon from "@/assets/logo-icon.png";
 import ownerPhoto from "@/assets/owner-photo.jpg";
 import { AppTheme } from "@/types";
-import { AuthUser, useAuth } from "@/lib/auth";
+import { AuthUser, useAuth } from "@/lib/auth.tsx";
 
 interface HeaderProps {
   theme: AppTheme;

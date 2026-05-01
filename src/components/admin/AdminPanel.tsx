@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Users, ShieldCheck, ShieldX, Settings2, RefreshCw, ChevronDown, ChevronUp, Crown, ToggleLeft, ToggleRight, Hash, Loader2, Search, LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/auth.tsx";
 import { toast } from "sonner";
 
 interface AdminUser {
