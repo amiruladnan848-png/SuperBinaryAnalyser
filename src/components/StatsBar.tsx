@@ -28,10 +28,10 @@ const StatsBar: React.FC<StatsBarProps> = ({ signalCount, selectedPairs, themeCo
   const stats = [
     { icon: BarChart2, label: "Signals Today", value: animatedCount.toString(), color: themeColor },
     { icon: TrendingUp, label: "Active Pairs", value: selectedPairs.toString(), color: "#00d4ff" },
-    { icon: Zap, label: "Engine", value: isRunning ? "LIVE" : "IDLE", color: isRunning ? "#00ff88" : isDark ? "#6b7280" : "#9ca3af" },
+    { icon: Zap, label: "Engine", value: "MANUAL", color: themeColor },
     { icon: Shield, label: "Target Win", value: `${winRate}%+`, color: "#FFD700" },
     { icon: Brain, label: "Indicators", value: "12 Active", color: "#a855f7" },
-    { icon: Layers, label: "Logic", value: "PA + Zone", color: "#f97316" },
+    { icon: Layers, label: "Logic", value: "BB + PA", color: "#f97316" },
   ];
 
   const border = isDark ? "border-gray-800/40" : "border-gray-200";

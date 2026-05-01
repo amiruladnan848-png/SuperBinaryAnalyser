@@ -59,8 +59,6 @@ export function getMACDCross(closes: number[]): "BULLISH" | "BEARISH" | "NEUTRAL
   const offset = ema12.length - ema26.length;
   const macdLine = ema26.map((v, i) => ema12[i + offset] - v);
   const signalLine = calculateEMA(macdLine, 9);
-  const n = Math.min(macdLine.length, signalLine.length);
-  if (n < 2) return "NEUTRAL";
   const mLen = macdLine.length, sLen = signalLine.length;
   const prevMacd = macdLine[mLen - 2], prevSig = signalLine[sLen - 2];
   const currMacd = macdLine[mLen - 1], currSig = signalLine[sLen - 1];
@@ -71,17 +69,120 @@ export function getMACDCross(closes: number[]): "BULLISH" | "BEARISH" | "NEUTRAL
   return "NEUTRAL";
 }
 
-// ─── Bollinger Bands ──────────────────────────────────────────────────────────
-export function calculateBollingerBands(closes: number[], period = 20, stdDevMult = 2) {
-  const slice = closes.length >= period ? closes.slice(-period) : closes;
-  const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
-  const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / slice.length;
+// ─── BOLLINGER BANDS (Enhanced — core indicator) ──────────────────────────────
+export interface BollingerResult {
+  upper: number;
+  middle: number;
+  lower: number;
+  bandwidth: number;
+  percentB: number;
+  squeeze: boolean;
+  squeezeMomentum: number; // positive = bullish, negative = bearish
+  breakout: "UPPER" | "LOWER" | "NONE";
+  walkingBand: "UPPER" | "LOWER" | "NONE";
+  bbSignal: "STRONG_BUY" | "BUY" | "SELL" | "STRONG_SELL" | "NEUTRAL";
+  expansion: boolean;
+  contraction: boolean;
+}
+
+export function calculateBollingerBands(closes: number[], period = 20, stdDevMult = 2): BollingerResult {
+  if (closes.length < period) {
+    const last = closes[closes.length - 1] ?? 0;
+    return {
+      upper: last, middle: last, lower: last, bandwidth: 0, percentB: 0.5,
+      squeeze: false, squeezeMomentum: 0, breakout: "NONE", walkingBand: "NONE",
+      bbSignal: "NEUTRAL", expansion: false, contraction: false,
+    };
+  }
+
+  const slice = closes.slice(-period);
+  const mean = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
   const sd = Math.sqrt(variance);
   const upper = mean + stdDevMult * sd;
   const lower = mean - stdDevMult * sd;
+  const bandwidth = mean > 0 ? ((upper - lower) / mean) * 100 : 0;
   const last = closes[closes.length - 1];
   const percentB = upper === lower ? 0.5 : (last - lower) / (upper - lower);
-  return { upper, middle: mean, lower, bandwidth: sd === 0 ? 0 : (upper - lower) / mean, percentB };
+
+  // ── Squeeze detection: BB narrower than recent 20-period average bandwidth ─
+  let squeeze = false;
+  let avgBW = bandwidth;
+  if (closes.length >= period + 10) {
+    const bwHistory: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const s = closes.slice(-(period + i + 1), -(i + 1) || undefined);
+      if (s.length < period) continue;
+      const m2 = s.reduce((a, b) => a + b, 0) / period;
+      const v2 = s.reduce((a, b) => a + Math.pow(b - m2, 2), 0) / period;
+      const sd2 = Math.sqrt(v2);
+      const bw2 = m2 > 0 ? ((m2 + stdDevMult * sd2 - (m2 - stdDevMult * sd2)) / m2) * 100 : 0;
+      bwHistory.push(bw2);
+    }
+    avgBW = bwHistory.reduce((a, b) => a + b, 0) / bwHistory.length || bandwidth;
+    squeeze = bandwidth < avgBW * 0.75;
+  }
+
+  // ── Squeeze momentum: EMA of (close - midline) during squeeze ──────────────
+  const recentCloses = closes.slice(-5);
+  const squeezeMomentum = recentCloses.reduce((sum, c) => sum + (c - mean), 0) / recentCloses.length;
+
+  // ── Breakout detection ─────────────────────────────────────────────────────
+  let breakout: "UPPER" | "LOWER" | "NONE" = "NONE";
+  const prevClose = closes[closes.length - 2] ?? last;
+  if (last > upper && prevClose <= upper) breakout = "UPPER";
+  else if (last < lower && prevClose >= lower) breakout = "LOWER";
+
+  // ── Walking the bands: 3 consecutive closes above/below band ──────────────
+  let walkingBand: "UPPER" | "LOWER" | "NONE" = "NONE";
+  if (closes.length >= period + 3) {
+    const last3 = closes.slice(-3);
+    // Recalculate bands for last 3 positions
+    const walkUpper = (i: number) => {
+      const s = closes.slice(-(period + (2 - i)), -(2 - i) || undefined);
+      if (!s.length) return upper;
+      const m = s.reduce((a, b) => a + b, 0) / s.length;
+      const v = s.reduce((a, b) => a + Math.pow(b - m, 2), 0) / s.length;
+      return m + stdDevMult * Math.sqrt(v);
+    };
+    const walkLower = (i: number) => {
+      const s = closes.slice(-(period + (2 - i)), -(2 - i) || undefined);
+      if (!s.length) return lower;
+      const m = s.reduce((a, b) => a + b, 0) / s.length;
+      const v = s.reduce((a, b) => a + Math.pow(b - m, 2), 0) / s.length;
+      return m - stdDevMult * Math.sqrt(v);
+    };
+    const allAboveUpper = last3.every((c, i) => c >= walkUpper(i) * 0.9995);
+    const allBelowLower = last3.every((c, i) => c <= walkLower(i) * 1.0005);
+    if (allAboveUpper) walkingBand = "UPPER";
+    else if (allBelowLower) walkingBand = "LOWER";
+  }
+
+  // ── Bandwidth expansion/contraction ───────────────────────────────────────
+  const expansion = bandwidth > avgBW * 1.25;
+  const contraction = bandwidth < avgBW * 0.85;
+
+  // ── Composite BB signal ────────────────────────────────────────────────────
+  let bbSignal: BollingerResult["bbSignal"] = "NEUTRAL";
+
+  if (breakout === "LOWER" && squeezeMomentum < 0) bbSignal = "STRONG_BUY";
+  else if (percentB <= 0.05 && sd > 0) bbSignal = "STRONG_BUY";
+  else if (breakout === "UPPER" && squeezeMomentum > 0) bbSignal = "STRONG_SELL";
+  else if (percentB >= 0.95 && sd > 0) bbSignal = "STRONG_SELL";
+  else if (walkingBand === "UPPER" && expansion) bbSignal = "SELL"; // overbought walk
+  else if (walkingBand === "LOWER" && expansion) bbSignal = "BUY"; // oversold walk
+  else if (squeeze && squeezeMomentum > 0) bbSignal = "BUY";
+  else if (squeeze && squeezeMomentum < 0) bbSignal = "SELL";
+  else if (percentB <= 0.2) bbSignal = "BUY";
+  else if (percentB >= 0.8) bbSignal = "SELL";
+  else if (percentB < 0.42) bbSignal = "BUY";
+  else if (percentB > 0.58) bbSignal = "SELL";
+
+  return {
+    upper, middle: mean, lower, bandwidth, percentB,
+    squeeze, squeezeMomentum, breakout, walkingBand,
+    bbSignal, expansion, contraction,
+  };
 }
 
 // ─── Stochastic ───────────────────────────────────────────────────────────────
@@ -177,7 +278,7 @@ export function calculatePivotPoints(candles: CandleData[]) {
   };
 }
 
-// ─── Ichimoku (Tenkan + Kijun) ────────────────────────────────────────────────
+// ─── Ichimoku ─────────────────────────────────────────────────────────────────
 export function calculateIchimoku(candles: CandleData[]) {
   const getMiddle = (c: CandleData[], period: number) => {
     const slice = c.slice(-period);
@@ -205,7 +306,6 @@ export function detectLiquidityZones(candles: CandleData[], atr: number): {
   const last = candles[candles.length - 1];
   const prev20 = candles.slice(-20, -1);
 
-  // Find swing highs/lows (liquidity pools)
   const swingHighs = prev20.filter((c, i) =>
     i > 0 && i < prev20.length - 1 &&
     c.high > prev20[i - 1].high && c.high > prev20[i + 1].high
@@ -217,77 +317,60 @@ export function detectLiquidityZones(candles: CandleData[], atr: number): {
   ).map(c => c.low);
 
   const closePrice = last.close;
-
-  // Liquidity grab: price swept past swing high/low and reversed
   const upperWick = last.high - Math.max(last.open, last.close);
   const lowerWick = Math.min(last.open, last.close) - last.low;
 
   let buyLiquidity = false, sellLiquidity = false, liquidityType = "None", strength = 0;
 
-  // Buy-side liquidity grab (swept lows, now reversing up)
   const nearSwingLow = swingLows.some(l => Math.abs(closePrice - l) < atr * 0.8);
   const nearSwingHigh = swingHighs.some(h => Math.abs(closePrice - h) < atr * 0.8);
 
   if (lowerWick > atr * 1.2 && nearSwingLow) {
-    buyLiquidity = true;
-    liquidityType = "Liquidity Grab (Bullish)";
+    buyLiquidity = true; liquidityType = "Liquidity Grab (Bullish)";
     strength = Math.min(100, (lowerWick / atr) * 40);
   } else if (upperWick > atr * 1.2 && nearSwingHigh) {
-    sellLiquidity = true;
-    liquidityType = "Liquidity Grab (Bearish)";
+    sellLiquidity = true; liquidityType = "Liquidity Grab (Bearish)";
     strength = Math.min(100, (upperWick / atr) * 40);
   }
 
-  // Order block detection: big candle before reversal
   const prevCandle = candles[candles.length - 2];
   const prevBody = Math.abs(prevCandle.close - prevCandle.open);
   if (prevBody > atr * 1.5) {
     if (prevCandle.close < prevCandle.open && last.close > last.open) {
-      buyLiquidity = true;
-      liquidityType = "Bullish Order Block";
-      strength = Math.max(strength, 75);
+      buyLiquidity = true; liquidityType = "Bullish Order Block"; strength = Math.max(strength, 75);
     } else if (prevCandle.close > prevCandle.open && last.close < last.open) {
-      sellLiquidity = true;
-      liquidityType = "Bearish Order Block";
-      strength = Math.max(strength, 75);
+      sellLiquidity = true; liquidityType = "Bearish Order Block"; strength = Math.max(strength, 75);
     }
   }
 
   return { buyLiquidity, sellLiquidity, liquidityType, strength };
 }
 
-// ─── Market Structure (Break of Structure) ────────────────────────────────────
+// ─── Market Structure ────────────────────────────────────────────────────────
 export function detectMarketStructure(candles: CandleData[]): {
   bos: "BULLISH" | "BEARISH" | "NONE";
   choch: "BULLISH" | "BEARISH" | "NONE";
 } {
   if (candles.length < 10) return { bos: "NONE", choch: "NONE" };
-
   const recent = candles.slice(-10);
   const highs = recent.map(c => c.high);
   const lows = recent.map(c => c.low);
-
   const lastHigh = highs[highs.length - 1];
   const lastLow = lows[lows.length - 1];
   const prevHigh = Math.max(...highs.slice(0, -1));
   const prevLow = Math.min(...lows.slice(0, -1));
-
   let bos: "BULLISH" | "BEARISH" | "NONE" = "NONE";
   let choch: "BULLISH" | "BEARISH" | "NONE" = "NONE";
-
   if (lastHigh > prevHigh) bos = "BULLISH";
   else if (lastLow < prevLow) bos = "BEARISH";
-
-  // Change of Character: previously bearish structure now showing bullish BOS
   const midHigh = Math.max(...highs.slice(2, 6));
   const midLow = Math.min(...lows.slice(2, 6));
   if (lastHigh > midHigh && lows[lows.length - 3] < lows[lows.length - 5]) choch = "BULLISH";
   else if (lastLow < midLow && highs[highs.length - 3] > highs[highs.length - 5]) choch = "BEARISH";
-
   return { bos, choch };
 }
 
-// ─── Volume Profile ───────────────────────────────────────────────────────────
+// ─── Volume ───────────────────────────────────────────────────────────────────
 export function analyzeVolume(candles: CandleData[]): { trend: "INCREASING" | "DECREASING" | "NEUTRAL"; ratio: number } {
   if (candles.length < 10) return { trend: "NEUTRAL", ratio: 1 };
   const recent = candles.slice(-5).map(c => c.volume).filter(v => v > 0);
@@ -320,19 +403,16 @@ export function detectCandlePattern(candles: CandleData[]): {
   const isBullish = c.close > c.open;
   const isBearish = c.close < c.open;
 
-  // 3-Candle patterns
+  const p3 = candles.length > 3 ? candles[candles.length - 4] : null;
+
   if (prev2.close < prev2.open && Math.abs(prev.close - prev.open) < prevBody * 0.4 && c.close > c.open && c.close > (prev2.open + prev2.close) / 2)
     return { pattern: "Morning Star", bias: "BULLISH", strength: 92 };
   if (prev2.close > prev2.open && Math.abs(prev.close - prev.open) < prevBody * 0.4 && c.close < c.open && c.close < (prev2.open + prev2.close) / 2)
     return { pattern: "Evening Star", bias: "BEARISH", strength: 92 };
-
-  const p3 = candles.length > 3 ? candles[candles.length - 4] : null;
   if (p3 && prev2.close > prev2.open && prev.close > prev.open && c.close > c.open && prev2.close > p3.close && prev.close > prev2.close && c.close > prev.close)
     return { pattern: "Three White Soldiers", bias: "BULLISH", strength: 96 };
   if (p3 && prev2.close < prev2.open && prev.close < prev.open && c.close < c.open && prev2.close < p3.close && prev.close < prev2.close && c.close < prev.close)
     return { pattern: "Three Black Crows", bias: "BEARISH", strength: 96 };
-
-  // 2-Candle patterns
   if (prev.close < prev.open && isBullish && c.open <= prev.close && c.close >= prev.open)
     return { pattern: "Bullish Engulfing", bias: "BULLISH", strength: 88 };
   if (prev.close > prev.open && isBearish && c.open >= prev.close && c.close <= prev.open)
@@ -345,8 +425,6 @@ export function detectCandlePattern(candles: CandleData[]): {
     return { pattern: "Bullish Harami", bias: "BULLISH", strength: 72 };
   if (prev.close > prev.open && isBearish && c.open < prev.close && c.close > prev.open && body < prevBody * 0.5)
     return { pattern: "Bearish Harami", bias: "BEARISH", strength: 72 };
-
-  // 1-Candle patterns
   if (lowerWick >= body * 2 && upperWick <= body * 0.5 && isBullish && totalRange > 0)
     return { pattern: "Hammer", bias: "BULLISH", strength: 77 };
   if (upperWick >= body * 2 && lowerWick <= body * 0.5 && isBearish && totalRange > 0)
@@ -355,9 +433,9 @@ export function detectCandlePattern(candles: CandleData[]): {
     return { pattern: "Inverted Hammer", bias: "BULLISH", strength: 65 };
   if (lowerWick >= body * 2 && upperWick <= body * 0.5 && isBearish)
     return { pattern: "Hanging Man", bias: "BEARISH", strength: 65 };
-  if (isBullish && upperWick < body * 0.05 && lowerWick < body * 0.05 && body > 0)
+  if (isBullish && upperWick < body * 0.05 && lowerWick < body * 0.05)
     return { pattern: "Bullish Marubozu", bias: "BULLISH", strength: 82 };
-  if (isBearish && upperWick < body * 0.05 && lowerWick < body * 0.05 && body > 0)
+  if (isBearish && upperWick < body * 0.05 && lowerWick < body * 0.05)
     return { pattern: "Bearish Marubozu", bias: "BEARISH", strength: 82 };
   if (totalRange > 0 && body < totalRange * 0.08)
     return { pattern: "Doji", bias: "NEUTRAL", strength: 50 };
@@ -415,39 +493,42 @@ export function runAllIndicators(candles: CandleData[]): IndicatorResult[] {
   const closes = candles.map(c => c.close);
   const results: IndicatorResult[] = [];
 
-  // 1. RSI (14) — weight 20
+  // 1. RSI (14) — weight 18
   const rsi = calculateRSI(closes, 14);
-  let rsiSig: "BUY" | "SELL" | "NEUTRAL" = rsi <= 35 ? "BUY" : rsi >= 65 ? "SELL" : rsi < 47 ? "BUY" : rsi > 53 ? "SELL" : "NEUTRAL";
-  results.push({ name: "RSI (14)", value: rsi.toFixed(2), signal: rsiSig, weight: 20 });
+  const rsiSig: "BUY" | "SELL" | "NEUTRAL" = rsi <= 35 ? "BUY" : rsi >= 65 ? "SELL" : rsi < 47 ? "BUY" : rsi > 53 ? "SELL" : "NEUTRAL";
+  results.push({ name: "RSI (14)", value: rsi.toFixed(2), signal: rsiSig, weight: 18 });
 
-  // 2. MACD Cross — weight 18
+  // 2. MACD Cross — weight 16
   const macdCross = getMACDCross(closes);
   const { histogram } = calculateMACD(closes);
-  results.push({ name: "MACD", value: histogram.toFixed(6), signal: macdCross === "BULLISH" ? "BUY" : macdCross === "BEARISH" ? "SELL" : "NEUTRAL", weight: 18 });
+  results.push({ name: "MACD", value: histogram.toFixed(6), signal: macdCross === "BULLISH" ? "BUY" : macdCross === "BEARISH" ? "SELL" : "NEUTRAL", weight: 16 });
 
-  // 3. Bollinger Bands — weight 15
+  // 3. Bollinger Bands (Enhanced — highest weight) — weight 28
   const bb = calculateBollingerBands(closes);
-  let bbSig: "BUY" | "SELL" | "NEUTRAL" = bb.percentB <= 0.2 ? "BUY" : bb.percentB >= 0.8 ? "SELL" : bb.percentB < 0.42 ? "BUY" : bb.percentB > 0.58 ? "SELL" : "NEUTRAL";
-  results.push({ name: "Bollinger Bands", value: `%B:${(bb.percentB * 100).toFixed(1)}%`, signal: bbSig, weight: 15 });
+  const bbSig: "BUY" | "SELL" | "NEUTRAL" =
+    bb.bbSignal === "STRONG_BUY" || bb.bbSignal === "BUY" ? "BUY" :
+    bb.bbSignal === "STRONG_SELL" || bb.bbSignal === "SELL" ? "SELL" : "NEUTRAL";
+  const bbLabel = `%B:${(bb.percentB * 100).toFixed(1)}% ${bb.squeeze ? "SQZ" : ""} ${bb.breakout !== "NONE" ? "BRK" : ""}`.trim();
+  results.push({ name: "Bollinger Bands", value: bbLabel, signal: bbSig, weight: 28 });
 
   // 4. Stochastic — weight 14
   const stoch = calculateStochastic(candles);
-  let stochSig: "BUY" | "SELL" | "NEUTRAL" = (stoch.k < 25 && stoch.d < 30) ? "BUY" : (stoch.k > 75 && stoch.d > 70) ? "SELL" : (stoch.k < 40 && stoch.k > stoch.d) ? "BUY" : (stoch.k > 60 && stoch.k < stoch.d) ? "SELL" : "NEUTRAL";
+  const stochSig: "BUY" | "SELL" | "NEUTRAL" = (stoch.k < 25 && stoch.d < 30) ? "BUY" : (stoch.k > 75 && stoch.d > 70) ? "SELL" : (stoch.k < 40 && stoch.k > stoch.d) ? "BUY" : (stoch.k > 60 && stoch.k < stoch.d) ? "SELL" : "NEUTRAL";
   results.push({ name: "Stochastic", value: `K:${stoch.k.toFixed(1)} D:${stoch.d.toFixed(1)}`, signal: stochSig, weight: 14 });
 
   // 5. Williams %R — weight 10
   const willR = calculateWilliamsR(candles);
-  let wrSig: "BUY" | "SELL" | "NEUTRAL" = willR <= -80 ? "BUY" : willR >= -20 ? "SELL" : willR < -60 ? "BUY" : willR > -40 ? "SELL" : "NEUTRAL";
+  const wrSig: "BUY" | "SELL" | "NEUTRAL" = willR <= -80 ? "BUY" : willR >= -20 ? "SELL" : willR < -60 ? "BUY" : willR > -40 ? "SELL" : "NEUTRAL";
   results.push({ name: "Williams %R", value: willR.toFixed(2), signal: wrSig, weight: 10 });
 
   // 6. CCI (20) — weight 10
   const cci = calculateCCI(candles);
-  let cciSig: "BUY" | "SELL" | "NEUTRAL" = cci <= -100 ? "BUY" : cci >= 100 ? "SELL" : cci < -50 ? "BUY" : cci > 50 ? "SELL" : "NEUTRAL";
+  const cciSig: "BUY" | "SELL" | "NEUTRAL" = cci <= -100 ? "BUY" : cci >= 100 ? "SELL" : cci < -50 ? "BUY" : cci > 50 ? "SELL" : "NEUTRAL";
   results.push({ name: "CCI (20)", value: cci.toFixed(2), signal: cciSig, weight: 10 });
 
   // 7. ADX/DI — weight 9
   const adx = calculateADX(candles);
-  let adxSig: "BUY" | "SELL" | "NEUTRAL" = adx.adx > 18 ? (adx.plusDI > adx.minusDI ? "BUY" : "SELL") : "NEUTRAL";
+  const adxSig: "BUY" | "SELL" | "NEUTRAL" = adx.adx > 18 ? (adx.plusDI > adx.minusDI ? "BUY" : "SELL") : "NEUTRAL";
   results.push({ name: "ADX/DI", value: `ADX:${adx.adx.toFixed(1)} +DI:${adx.plusDI.toFixed(1)}`, signal: adxSig, weight: 9 });
 
   // 8. Ichimoku — weight 9
@@ -460,7 +541,7 @@ export function runAllIndicators(candles: CandleData[]): IndicatorResult[] {
 
   // 10. ROC (10) — weight 6
   const roc = calculateROC(closes);
-  let rocSig: "BUY" | "SELL" | "NEUTRAL" = roc > 0.05 ? "BUY" : roc < -0.05 ? "SELL" : "NEUTRAL";
+  const rocSig: "BUY" | "SELL" | "NEUTRAL" = roc > 0.05 ? "BUY" : roc < -0.05 ? "SELL" : "NEUTRAL";
   results.push({ name: "ROC (10)", value: roc.toFixed(4), signal: rocSig, weight: 6 });
 
   return results;
