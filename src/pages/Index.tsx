@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { AuthProvider, useAuth, ADMIN_EMAIL } from "@/lib/auth.tsx";
 import AuthPage from "@/components/auth/AuthPage";
 import AdminPanel from "@/components/admin/AdminPanel";
@@ -13,16 +13,77 @@ import ownerPhoto from "@/assets/owner-photo.jpg";
 import heroBanner from "@/assets/hero-banner.jpg";
 import { supabase } from "@/lib/supabase";
 import { isWeekend } from "@/lib/marketUtils";
+import { Lock, AlertTriangle, Info, CheckCircle, Megaphone, X, Bell } from "lucide-react";
+
+// ── Announcement banner types ─────────────────────────────────────────────────
+interface Announcement {
+  id: string;
+  title: string;
+  message: string;
+  type: "info" | "warning" | "success" | "danger";
+  is_active: boolean;
+  created_at: string;
+}
+
+const annTypeConfig = {
+  info:    { color: "#00d4ff", bg: "#00d4ff15", border: "#00d4ff40", Icon: Info },
+  warning: { color: "#FFD700", bg: "#FFD70015", border: "#FFD70040", Icon: AlertTriangle },
+  success: { color: "#00ff88", bg: "#00ff8815", border: "#00ff8840", Icon: CheckCircle },
+  danger:  { color: "#ff4466", bg: "#ff446615", border: "#ff446640", Icon: AlertTriangle },
+};
+
+// ── Announcement Banner Component ─────────────────────────────────────────────
+const AnnouncementBanner: React.FC<{ ann: Announcement; isDark: boolean; onDismiss: (id: string) => void }> = ({ ann, isDark, onDismiss }) => {
+  const cfg = annTypeConfig[ann.type] || annTypeConfig.info;
+  const { Icon } = cfg;
+  return (
+    <div
+      className="relative flex items-start gap-3 px-4 py-3 rounded-xl border transition-all animate-in fade-in slide-in-from-top-2 duration-400"
+      style={{ background: cfg.bg, borderColor: cfg.border, boxShadow: `0 2px 20px ${cfg.color}15` }}>
+      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+        style={{ background: `${cfg.color}20`, border: `1px solid ${cfg.border}` }}>
+        <Icon size={15} style={{ color: cfg.color }} />
+      </div>
+      <div className="flex-1 min-w-0 pt-0.5">
+        <p className="text-sm font-bold" style={{ color: cfg.color }}>{ann.title}</p>
+        <p className={`text-xs mt-0.5 ${isDark ? "text-gray-400" : "text-gray-600"}`}>{ann.message}</p>
+      </div>
+      <button onClick={() => onDismiss(ann.id)}
+        className={`flex-shrink-0 p-1 rounded-lg transition-colors hover:bg-white/10 ${isDark ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600"}`}>
+        <X size={13} />
+      </button>
+    </div>
+  );
+};
+
+// ── Weekend Lock Screen ────────────────────────────────────────────────────────
+const WeekendLockScreen: React.FC<{ isDark: boolean; themeColor: string }> = ({ isDark, themeColor }) => (
+  <div className={`flex flex-col items-center justify-center py-20 text-center rounded-2xl border ${isDark ? "border-gray-800/50 bg-black/40" : "border-gray-200 bg-white/60"} backdrop-blur-xl`}>
+    <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-5 border"
+      style={{ background: "#ff446615", borderColor: "#ff446640" }}>
+      <Lock size={36} className="text-red-400" />
+    </div>
+    <h2 className={`text-2xl font-black mb-2 ${isDark ? "text-gray-200" : "text-gray-800"}`}>Real Market Closed</h2>
+    <p className={`text-sm max-w-sm ${isDark ? "text-gray-500" : "text-gray-500"}`}>
+      Auto signal engine is <span className="text-red-400 font-bold">LOCKED</span> on weekends (Saturday &amp; Sunday).<br />
+      Real forex market is closed. Please return on <span className="font-bold" style={{ color: themeColor }}>Monday</span>.
+    </p>
+    <div className="flex items-center gap-2 mt-4 px-4 py-2 rounded-full border border-amber-700/40 bg-amber-950/20">
+      <AlertTriangle size={13} className="text-amber-400" />
+      <span className="text-xs text-amber-400 font-medium">Weekend — Market Off • Come Back Monday</span>
+    </div>
+  </div>
+);
 
 const THEME_CONFIG: Record<AppTheme, { color: string; dark: boolean }> = {
   emerald: { color: "#00ff88", dark: true },
-  gold: { color: "#FFD700", dark: true },
-  cyber: { color: "#00d4ff", dark: true },
-  ocean: { color: "#0080ff", dark: true },
-  ruby: { color: "#ff3366", dark: true },
-  violet: { color: "#a855f7", dark: true },
-  light: { color: "#2563eb", dark: false },
-  rose: { color: "#e11d48", dark: false },
+  gold:    { color: "#FFD700", dark: true },
+  cyber:   { color: "#00d4ff", dark: true },
+  ocean:   { color: "#0080ff", dark: true },
+  ruby:    { color: "#ff3366", dark: true },
+  violet:  { color: "#a855f7", dark: true },
+  light:   { color: "#2563eb", dark: false },
+  rose:    { color: "#e11d48", dark: false },
 };
 
 const STORAGE_KEYS = {
@@ -33,10 +94,9 @@ const STORAGE_KEYS = {
 
 const DEFAULT_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "EUR/JPY"];
 
-// ── Inner app (needs auth context) ───────────────────────────────────────────
+// ── Inner app ─────────────────────────────────────────────────────────────────
 const AppContent: React.FC = () => {
   const { user, loading } = useAuth();
-  const [authDone, setAuthDone] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<AppTheme>("emerald");
   const [isDark, setIsDark] = useState(true);
@@ -49,10 +109,14 @@ const AppContent: React.FC = () => {
   const [weekend, setWeekend] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
-  // User access from DB
+  // User access
   const [isAllowed, setIsAllowed] = useState(false);
   const [signalLimit, setSignalLimit] = useState(10);
   const [signalsUsed, setSignalsUsed] = useState(0);
+
+  // Announcements
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const stored = {
@@ -75,11 +139,9 @@ const AppContent: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
-  // Fetch user access record from DB
+  // Fetch user access from DB
   useEffect(() => {
     if (!user) return;
-
-    // Admin has unrestricted access
     if (user.isAdmin) {
       setIsAllowed(true);
       setSignalLimit(999);
@@ -95,7 +157,6 @@ const AppContent: React.FC = () => {
         .maybeSingle();
 
       if (data) {
-        // Reset daily count if new day
         const today = new Date().toISOString().split("T")[0];
         let usedToday = data.signals_used_today;
         if (data.last_reset_date !== today) {
@@ -106,7 +167,6 @@ const AppContent: React.FC = () => {
         setSignalLimit(data.signal_limit);
         setSignalsUsed(usedToday);
       } else {
-        // No record yet — create pending access
         await supabase.from("user_access").insert({ user_id: user.id, is_allowed: false, signal_limit: 10, signals_used_today: 0 });
         setIsAllowed(false);
         setSignalLimit(10);
@@ -116,6 +176,25 @@ const AppContent: React.FC = () => {
 
     fetchAccess();
   }, [user]);
+
+  // Fetch live announcements with polling (every 30s)
+  const fetchAnnouncements = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from("announcements")
+      .select("*")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+    if (data) setAnnouncements(data);
+  }, [user]);
+
+  useEffect(() => {
+    fetchAnnouncements();
+    const t = setInterval(fetchAnnouncements, 30000);
+    return () => clearInterval(t);
+  }, [fetchAnnouncements]);
+
+  const handleDismiss = (id: string) => setDismissedIds(prev => new Set(prev).add(id));
 
   const handleTheme = (t: AppTheme) => {
     setTheme(t);
@@ -133,9 +212,7 @@ const AppContent: React.FC = () => {
     });
   };
 
-  const handleSignalGenerated = (count: number) => {
-    setSignalCount(prev => prev + count);
-  };
+  const handleSignalGenerated = (count: number) => setSignalCount(prev => prev + count);
 
   const handleSignalsUsed = async (n: number) => {
     setSignalsUsed(n);
@@ -154,16 +231,20 @@ const AppContent: React.FC = () => {
 
   const themeColor = THEME_CONFIG[theme]?.color || "#00ff88";
 
+  // Visible (non-dismissed) active announcements
+  const visibleAnnouncements = announcements.filter(a => !dismissedIds.has(a.id));
+
   if (!mounted || loading) return (
     <div className="min-h-screen bg-[#020c15] flex items-center justify-center">
       <div className="flex flex-col items-center gap-4">
-        <div className="w-12 h-12 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#00ff8860", borderTopColor: "#00ff88" }} />
+        <div className="w-12 h-12 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: "#00ff8860", borderTopColor: "#00ff88" }} />
         <p className="text-gray-600 text-sm">Loading...</p>
       </div>
     </div>
   );
 
-  if (!user) return <AuthPage onAuthSuccess={() => setAuthDone(prev => !prev)} />;
+  if (!user) return <AuthPage onAuthSuccess={() => {}} />;
 
   const pageBg = isDark ? "bg-[#020c15]" : "bg-gray-50";
 
@@ -176,7 +257,7 @@ const AppContent: React.FC = () => {
             <div className="absolute inset-0 transition-opacity duration-1500" style={{ opacity: ownerBgLoaded ? 1 : 0 }}>
               <div className="absolute top-0 right-0 bottom-0" style={{ width: "45%", backgroundImage: `url(${ownerPhoto})`, backgroundSize: "cover", backgroundPosition: "center top", opacity: 0.07, filter: "blur(12px) saturate(2)" }} />
               <div className="absolute inset-0" style={{ backgroundImage: `url(${ownerPhoto})`, backgroundSize: "cover", backgroundPosition: "center top", opacity: 0.03, filter: "blur(30px)" }} />
-              <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, #020c15 0%, #020c15ee 40%, #020c15a0 65%, #020c1530 100%)` }} />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #020c15 0%, #020c15ee 40%, #020c15a0 65%, #020c1530 100%)" }} />
             </div>
             <img src={ownerPhoto} alt="" className="hidden" onLoad={() => setOwnerBgLoaded(true)} />
             <div className="absolute inset-0" style={{ background: `radial-gradient(ellipse 80% 50% at 20% -5%, ${themeColor}09 0%, transparent 65%), radial-gradient(ellipse 60% 40% at 80% 100%, ${themeColor}06 0%, transparent 60%)` }} />
@@ -199,9 +280,33 @@ const AppContent: React.FC = () => {
         )}
       </div>
 
-      <Header theme={theme} onThemeChange={handleTheme} isDark={isDark} onToggleDark={handleToggleDark} showAdmin={user.isAdmin} onAdminToggle={() => setShowAdmin(p => !p)} isAdminOpen={showAdmin} user={user} />
+      <Header
+        theme={theme}
+        onThemeChange={handleTheme}
+        isDark={isDark}
+        onToggleDark={handleToggleDark}
+        showAdmin={user.isAdmin}
+        onAdminToggle={() => setShowAdmin(p => !p)}
+        isAdminOpen={showAdmin}
+        user={user}
+      />
 
       <div className="relative z-10 max-w-[1800px] mx-auto px-4 py-5 space-y-4">
+
+        {/* 🔔 Live Broadcast Announcements */}
+        {visibleAnnouncements.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+              <Bell size={12} className="text-yellow-400 animate-pulse" />
+              <span className={`text-[10px] font-bold tracking-widest ${isDark ? "text-gray-600" : "text-gray-400"}`}>
+                LIVE BROADCAST ({visibleAnnouncements.length})
+              </span>
+            </div>
+            {visibleAnnouncements.map(ann => (
+              <AnnouncementBanner key={ann.id} ann={ann} isDark={isDark} onDismiss={handleDismiss} />
+            ))}
+          </div>
+        )}
 
         {/* Admin Panel */}
         {user.isAdmin && showAdmin && (
@@ -219,7 +324,7 @@ const AppContent: React.FC = () => {
             <img src={ownerPhoto} alt="" className="w-full h-full object-cover object-top" style={{ opacity: isDark ? 0.20 : 0.13, filter: "blur(0.5px)" }} />
             <div className="absolute inset-0" style={{ background: `linear-gradient(90deg, ${isDark ? "#020c15" : "#fff"} 0%, ${isDark ? "#020c15bb" : "#ffffffbb"} 30%, transparent 80%)` }} />
           </div>
-          <div className="absolute inset-0" style={{ background: isDark ? `linear-gradient(90deg, #020c15 0%, #020c15bb 55%, transparent 100%)` : `linear-gradient(90deg, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.88) 55%, transparent 100%)` }} />
+          <div className="absolute inset-0" style={{ background: isDark ? "linear-gradient(90deg, #020c15 0%, #020c15bb 55%, transparent 100%)" : "linear-gradient(90deg, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.88) 55%, transparent 100%)" }} />
           <div className="absolute bottom-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${themeColor}80, transparent)` }} />
           <div className="absolute inset-0 flex items-center px-6 sm:px-8">
             <div className="max-w-xl">
@@ -227,7 +332,7 @@ const AppContent: React.FC = () => {
                 SUPER-BINARY-ANALYSER
               </h2>
               <p className={`text-sm mt-1 ${isDark ? "text-gray-400" : "text-gray-600"}`}>
-                12 Indicators • BB Primary • Price Action • Manual Signal Engine • 2026
+                12 Indicators • BB Primary • All Sessions 24/7 • Manual Signal Engine • 2026
               </p>
               <div className="flex items-center gap-3 mt-2 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -238,15 +343,18 @@ const AppContent: React.FC = () => {
                     {user.isAdmin ? "👑 Admin" : `@${user.username}`}
                   </span>
                 </div>
-                <a href="https://t.me/amirul_adnan_trader" target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">📱 @amirul_adnan_trader</a>
+                <a href="https://t.me/amirul_adnan_trader" target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
+                  📱 @amirul_adnan_trader
+                </a>
                 <span className="text-[10px] font-black px-3 py-1 rounded-full border" style={{ color: themeColor, borderColor: `${themeColor}40`, background: `${themeColor}12` }}>⚡ BB POWERED</span>
-                {weekend && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-700/40 bg-amber-950/20 text-amber-400">📅 Weekend Mode</span>}
+                {weekend && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-700/40 bg-red-950/20 text-red-400">🔒 Weekend Lock</span>}
               </div>
             </div>
           </div>
           <div className="absolute top-3 right-3 flex items-center gap-2 px-3 py-1.5 rounded-full border backdrop-blur-sm" style={{ borderColor: `${themeColor}30`, background: isDark ? "rgba(0,0,0,0.65)" : "rgba(255,255,255,0.9)" }}>
-            <div className="w-2 h-2 rounded-full animate-ping" style={{ background: themeColor }} />
-            <span className="text-[10px] font-black" style={{ color: themeColor }}>MANUAL MODE</span>
+            <div className="w-2 h-2 rounded-full animate-ping" style={{ background: weekend ? "#ff4466" : themeColor }} />
+            <span className="text-[10px] font-black" style={{ color: weekend ? "#ff4466" : themeColor }}>{weekend ? "WEEKEND LOCKED" : "MANUAL MODE"}</span>
           </div>
         </div>
 
@@ -281,20 +389,24 @@ const AppContent: React.FC = () => {
               </div>
             )}
 
-            {/* Manual Signal Panel */}
-            <ManualSignalPanel
-              selectedPairs={selectedPairs}
-              themeColor={themeColor}
-              isDark={isDark}
-              onSignalGenerated={handleSignalGenerated}
-              onPairChange={setChartPair}
-              soundEnabled={soundEnabled}
-              onSoundToggle={handleSoundToggle}
-              signalLimit={signalLimit}
-              signalsUsed={signalsUsed}
-              onSignalsUsed={handleSignalsUsed}
-              isAllowed={isAllowed}
-            />
+            {/* Weekend Lock OR Signal Panel */}
+            {weekend ? (
+              <WeekendLockScreen isDark={isDark} themeColor={themeColor} />
+            ) : (
+              <ManualSignalPanel
+                selectedPairs={selectedPairs}
+                themeColor={themeColor}
+                isDark={isDark}
+                onSignalGenerated={handleSignalGenerated}
+                onPairChange={setChartPair}
+                soundEnabled={soundEnabled}
+                onSoundToggle={handleSoundToggle}
+                signalLimit={signalLimit}
+                signalsUsed={signalsUsed}
+                onSignalsUsed={handleSignalsUsed}
+                isAllowed={isAllowed}
+              />
+            )}
           </div>
         </div>
 
@@ -306,12 +418,13 @@ const AppContent: React.FC = () => {
                 <img src={ownerPhoto} alt="" className="w-full h-full object-cover object-top" />
               </div>
               <span className={`text-xs ${isDark ? "text-gray-700" : "text-gray-400"}`}>
-                © 2026 Super-Binary-Analyser • Owner: Amirul_Adnan • v6.0 BB Ultra
+                © 2026 Super-Binary-Analyser • Owner: Amirul_Adnan • v7.0 Ultra
               </span>
             </div>
             <div className={`flex items-center gap-4 text-xs ${isDark ? "text-gray-700" : "text-gray-400"}`}>
               <span>⚠️ Educational only. Trade responsibly.</span>
-              <a href="https://t.me/amirul_adnan_trader" target="_blank" rel="noopener noreferrer" className="text-cyan-600 hover:text-cyan-500">@amirul_adnan_trader</a>
+              <a href="https://t.me/amirul_adnan_trader" target="_blank" rel="noopener noreferrer"
+                className="text-cyan-600 hover:text-cyan-500">@amirul_adnan_trader</a>
             </div>
           </div>
         </div>
@@ -327,12 +440,17 @@ const AppContent: React.FC = () => {
         ::-webkit-scrollbar{width:4px;height:4px}
         ::-webkit-scrollbar-track{background:transparent}
         ::-webkit-scrollbar-thumb{background:${themeColor}35;border-radius:2px}
+        @keyframes animate-in { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+        .animate-in { animation: animate-in 0.4s ease-out forwards; }
+        .fade-in { opacity: 0; }
+        .slide-in-from-top-2 { transform: translateY(-8px); }
+        .duration-400 { animation-duration: 0.4s; }
       `}</style>
     </div>
   );
 };
 
-// ── Root with AuthProvider ────────────────────────────────────────────────────
+// ── Root ──────────────────────────────────────────────────────────────────────
 const Index: React.FC = () => (
   <AuthProvider>
     <AppContent />

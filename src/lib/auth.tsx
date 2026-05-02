@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-export const ADMIN_EMAIL = "Info.amirulhoque@gmail.com";
+export const ADMIN_EMAIL = "info.amirulhoque@gmail.com";
 
 export interface AuthUser {
   id: string;
