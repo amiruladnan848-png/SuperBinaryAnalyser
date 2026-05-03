@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { TrendingUp, BarChart2, Zap, Shield, Target, Activity, Brain, Layers } from "lucide-react";
+import React, { useState, useEffect, memo } from "react";
+import { TrendingUp, BarChart2, Zap, Shield, Brain, Layers, Activity } from "lucide-react";
+import { getMarketSession } from "@/lib/marketUtils";
 
 interface StatsBarProps {
   signalCount: number;
@@ -10,8 +11,9 @@ interface StatsBarProps {
   winRate?: number;
 }
 
-const StatsBar: React.FC<StatsBarProps> = ({ signalCount, selectedPairs, themeColor, isRunning, isDark, winRate = 85 }) => {
+const StatsBar: React.FC<StatsBarProps> = memo(({ signalCount, selectedPairs, themeColor, isRunning, isDark, winRate = 88 }) => {
   const [animatedCount, setAnimatedCount] = useState(0);
+  const { label: sessionLabel, color: sessionColor } = getMarketSession();
 
   useEffect(() => {
     if (signalCount === 0) { setAnimatedCount(0); return; }
@@ -30,8 +32,8 @@ const StatsBar: React.FC<StatsBarProps> = ({ signalCount, selectedPairs, themeCo
     { icon: TrendingUp, label: "Active Pairs", value: selectedPairs.toString(), color: "#00d4ff" },
     { icon: Zap, label: "Engine", value: "MANUAL", color: themeColor },
     { icon: Shield, label: "Target Win", value: `${winRate}%+`, color: "#FFD700" },
-    { icon: Brain, label: "Indicators", value: "12 Active", color: "#a855f7" },
-    { icon: Layers, label: "Logic", value: "BB + PA", color: "#f97316" },
+    { icon: Brain, label: "Indicators", value: "19 Active", color: "#a855f7" },
+    { icon: Activity, label: "Session", value: sessionLabel.split(" ")[0], color: sessionColor },
   ];
 
   const border = isDark ? "border-gray-800/40" : "border-gray-200";
@@ -71,6 +73,8 @@ const StatsBar: React.FC<StatsBarProps> = ({ signalCount, selectedPairs, themeCo
       ))}
     </div>
   );
-};
+});
+
+StatsBar.displayName = "StatsBar";
 
 export default StatsBar;

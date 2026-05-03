@@ -64,12 +64,12 @@ const Header: React.FC<HeaderProps> = ({ theme, onThemeChange, isDark, onToggleD
                   SUPER-BINARY-ANALYSER
                 </h1>
                 <span className="hidden sm:flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border" style={{ color: currentTheme.color, background: `${currentTheme.color}12`, borderColor: `${currentTheme.color}35` }}>
-                  <Zap size={8} /> v6.0
+                  <Zap size={8} /> v8.0
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
                 <Shield size={10} style={{ color: currentTheme.color }} />
-                <span className={`text-[10px] tracking-widest ${isDark ? "text-gray-500" : "text-gray-400"}`}>BB POWERED • MANUAL SIGNAL ENGINE • 2026</span>
+                <span className={`text-[10px] tracking-widest ${isDark ? "text-gray-500" : "text-gray-400"}`}>SESSION-ADAPTIVE • 19 INDICATORS • 2026</span>
               </div>
             </div>
           </div>
