@@ -68,111 +68,157 @@
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 }
 
-/* ── Global smooth transitions ──────────────────────────────────────────────── */
-*, *::before, *::after {
-  transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
-  transition-duration: 150ms;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+/* ── Performance: GPU-accelerate key animated elements ───────────────────── */
+[class*="animate-"],
+[style*="animation"],
+.signal-enter,
+.ann-enter {
+  will-change: transform, opacity;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
-/* Exclude from blanket transition — breaks animations */
-@keyframes ping, @keyframes pulse, @keyframes spin, @keyframes bounce {
-  transition: none;
+/* ── Targeted transitions only — no blanket * transition ──────────────────── */
+button, a, input, textarea {
+  transition: background-color 150ms ease, border-color 150ms ease,
+              color 150ms ease, box-shadow 150ms ease, opacity 150ms ease,
+              transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* ── Utility animations ─────────────────────────────────────────────────────── */
-@keyframes floatParticle {
-  0%, 100% { transform: translateY(0px) rotate(0deg) scale(1); opacity: 0.10; }
-  33%       { transform: translateY(-22px) rotate(120deg) scale(1.3); opacity: 0.22; }
-  66%       { transform: translateY(-10px) rotate(240deg) scale(0.85); opacity: 0.14; }
-}
-
+/* ── Core animations ──────────────────────────────────────────────────────── */
 @keyframes shimmer {
   0%   { background-position: 0% center; }
   100% { background-position: 200% center; }
 }
 
-@keyframes scanLine {
-  0%   { top: 0%; }
-  100% { top: 100%; }
+@keyframes floatP {
+  0%, 100% { transform: translateY(0) scale(1);   opacity: 0.07; }
+  50%       { transform: translateY(-16px) scale(1.15); opacity: 0.16; }
 }
 
-@keyframes scanLineFull {
+@keyframes scanLine {
   0%   { top: -2px; opacity: 0; }
-  4%   { opacity: 1; }
-  96%  { opacity: 1; }
+  6%   { opacity: 1; }
+  94%  { opacity: 1; }
   100% { top: 100%; opacity: 0; }
 }
 
 @keyframes slide-in-up {
-  from { opacity: 0; transform: translateY(14px); }
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slide-in-right {
-  from { opacity: 0; transform: translateX(20px); }
+  from { opacity: 0; transform: translateX(16px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
+@keyframes ann-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.5); }
+  70%  { transform: scale(1);    box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+}
+
 @keyframes glow-breathe {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50%       { opacity: 0.75; transform: scale(1.08); }
+  0%, 100% { opacity: 0.40; filter: blur(0px); }
+  50%       { opacity: 0.72; filter: blur(1px); }
 }
 
-@keyframes border-flow {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
-/* ── Custom utility classes ─────────────────────────────────────────────────── */
+@keyframes authFloat {
+  0%, 100% { transform: translateY(0) scale(1);   opacity: 0.05; }
+  50%       { transform: translateY(-18px) scale(1.2); opacity: 0.14; }
+}
+
+@keyframes authShimmer {
+  0%   { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(6px) scale(0.9); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Utility classes ──────────────────────────────────────────────────────── */
 .signal-enter {
-  animation: slide-in-up 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: slide-in-up 0.36s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.ann-enter {
+  animation: ann-in 0.30s ease-out forwards;
+}
+
+.slide-right {
+  animation: slide-in-right 0.36s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .glow-breathe {
   animation: glow-breathe 3s ease-in-out infinite;
 }
 
-/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 255, 136, 0.25);
+  background: rgba(0, 255, 136, 0.2);
   border-radius: 2px;
+  transition: background 200ms;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 255, 136, 0.5);
+  background: rgba(0, 255, 136, 0.45);
 }
 
-/* ── Selection highlight ────────────────────────────────────────────────────── */
+/* ── Selection ────────────────────────────────────────────────────────────── */
 ::selection {
-  background: rgba(0, 255, 136, 0.25);
+  background: rgba(0, 255, 136, 0.22);
   color: inherit;
 }
 
-/* ── Smooth scroll ──────────────────────────────────────────────────────────── */
-html {
-  scroll-behavior: smooth;
-}
+/* ── Smooth scroll ────────────────────────────────────────────────────────── */
+html { scroll-behavior: smooth; }
 
-/* ── Font rendering ─────────────────────────────────────────────────────────── */
-body {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-/* ── Number font tabular ────────────────────────────────────────────────────── */
+/* ── Tabular numerals for timers/prices ───────────────────────────────────── */
+.tabular-nums,
 .font-mono {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+}
+
+/* ── Input autofill override ──────────────────────────────────────────────── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 100px rgba(2, 12, 21, 0.95) inset !important;
+  -webkit-text-fill-color: #e5e7eb !important;
+  caret-color: #00ff88;
+  transition: background-color 9999s ease-in-out;
+}
+
+/* ── Focus outlines ───────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid rgba(0, 255, 136, 0.5);
+  outline-offset: 2px;
+}
+
+/* ── Reduced motion support ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

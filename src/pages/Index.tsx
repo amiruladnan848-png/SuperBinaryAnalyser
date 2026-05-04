@@ -228,7 +228,7 @@ const AppContent: React.FC = () => {
     </div>
   );
 
-  if (!user) return <AuthPage onAuthSuccess={() => {}} />;
+  if (!user) return <AuthPage />;
 
   return (
     <div

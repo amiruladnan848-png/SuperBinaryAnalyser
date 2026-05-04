@@ -1,7 +1,7 @@
-import React, { useState, useRef, useCallback, useMemo, memo } from "react";
+import React, { useState, useRef, useCallback, useMemo, memo, useEffect } from "react";
 import {
   Zap, ChevronDown, ChevronUp, Volume2, VolumeX,
-  AlertTriangle, Loader2, Clock, TrendingUp, RefreshCw,
+  AlertTriangle, Loader2, Clock, TrendingUp, RefreshCw, Timer,
 } from "lucide-react";
 import { Signal } from "@/types";
 import { generateDemoSignal } from "@/lib/signalEngine";
@@ -10,8 +10,20 @@ import { playCallSound, playPutSound, playStrongSignalSound } from "@/lib/soundE
 import SignalCard from "@/components/SignalCard";
 import { toast } from "sonner";
 
-function formatBDLocalTime(date: Date): string {
-  return date.toLocaleTimeString("en-US", { hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+// ── Precise time formatting ──────────────────────────────────────────────────
+function fmtTime(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
+function getNextCandleInfo(): { secsLeft: number; entryTime: Date; expiryTime: Date } {
+  const now = getBangladeshTime();
+  const secsLeft = 60 - now.getSeconds();
+  const entryTime = new Date(now.getTime() + secsLeft * 1000);
+  // Expiry is EXACTLY 1 minute after entry (next full candle close)
+  const expiryTime = new Date(entryTime.getTime() + 60 * 1000);
+  return { secsLeft, entryTime, expiryTime };
 }
 
 interface ManualSignalPanelProps {
@@ -38,6 +50,7 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
   const [scanningPair, setScanningPair] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [newSignalIds, setNewSignalIds] = useState<Set<string>>(new Set());
+  const [candleInfo, setCandleInfo] = useState(getNextCandleInfo());
   const soundRef = useRef(soundEnabled);
   soundRef.current = soundEnabled;
 
@@ -45,18 +58,26 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
   const limitReached = dailyLeft <= 0;
   const usagePct = useMemo(() => signalLimit > 0 ? Math.min(100, (signalsUsed / signalLimit) * 100) : 0, [signalLimit, signalsUsed]);
 
+  // ── Live candle countdown (updates every second) ──────────────────────────
+  useEffect(() => {
+    const tick = () => setCandleInfo(getNextCandleInfo());
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const border = isDark ? "border-gray-800/40" : "border-gray-200";
   const bg = isDark ? "bg-black/50" : "bg-white/80";
   const tb = isDark ? "text-gray-200" : "text-gray-800";
   const ts = isDark ? "text-gray-500" : "text-gray-500";
-
-  const bdNow = getBangladeshTime();
-  const nextMinuteSecs = 60 - bdNow.getSeconds();
-  const nextCandleTime = useMemo(() => new Date(getBangladeshTime().getTime() + (60 - getBangladeshTime().getSeconds()) * 1000), []);
-  const expiryTimeDt = useMemo(() => new Date(nextCandleTime.getTime() + 60 * 1000), [nextCandleTime]);
-
   const { label: sessionLabel } = getMarketSession();
 
+  // ── Countdown ring progress ───────────────────────────────────────────────
+  const ringPct = ((60 - candleInfo.secsLeft) / 60) * 100;
+  const isUrgent = candleInfo.secsLeft <= 10;
+  const countdownColor = isUrgent ? "#ff4466" : candleInfo.secsLeft <= 20 ? "#FFD700" : themeColor;
+
+  // ── Main scan ────────────────────────────────────────────────────────────
   const runManualScan = useCallback(async () => {
     if (processing) return;
     if (!isAllowed) { toast.error("❌ Access not granted. Contact admin."); return; }
@@ -71,8 +92,7 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
       if ((signalsUsed + scanned) >= signalLimit) break;
       setScanningPair(pair);
       if (onPairChange) onPairChange(pair);
-      // Brief pause for UX feedback
-      await new Promise(r => setTimeout(r, 60 + Math.random() * 50));
+      await new Promise(r => setTimeout(r, 55 + Math.random() * 45));
       const signal = generateDemoSignal(pair);
       if (signal) { newSignals.push(signal); scanned++; }
     }
@@ -86,7 +106,7 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
       setNewSignalIds(ids);
       setSignals(prev => [...newSignals, ...prev].slice(0, 80));
       onSignalGenerated?.(newSignals.length);
-      setTimeout(() => setNewSignalIds(new Set()), 4500);
+      setTimeout(() => setNewSignalIds(new Set()), 5000);
 
       const top = [...newSignals].sort((a, b) => b.confidence - a.confidence)[0];
       if (soundRef.current) {
@@ -94,14 +114,14 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
           if (top.strength === "STRONG") await playStrongSignalSound(top.direction as "CALL" | "PUT");
           else if (top.direction === "CALL") await playCallSound();
           else await playPutSound();
-        } catch { /* ignore audio errors */ }
+        } catch { /* ignore */ }
       }
 
       const topDir = top.direction === "CALL" ? "📈" : "📉";
       const strong = newSignals.filter(s => s.strength === "STRONG").length;
       const left = Math.max(0, signalLimit - (signalsUsed + newSignals.length));
       toast.success(
-        `${topDir} ${newSignals.length} signal(s) • ${strong} STRONG • ${left} left today`,
+        `${topDir} ${newSignals.length} signal(s) generated • ${strong} STRONG • ${left} left today`,
         { duration: 3500 }
       );
     }
@@ -109,106 +129,128 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
 
   const handleClear = useCallback(() => setSignals([]), []);
   const handleToggleShowAll = useCallback(() => setShowAll(p => !p), []);
-
   const visibleSignals = useMemo(() => showAll ? signals : signals.slice(0, 6), [signals, showAll]);
-
   const canScan = !processing && isAllowed && !limitReached && selectedPairs.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Control Card */}
-      <div
-        className={`rounded-2xl border overflow-hidden ${bg} backdrop-blur-xl`}
-        style={{ borderColor: isDark ? "#374151" : "#e5e7eb" }}
-      >
+      {/* ── Control Card ─────────────────────────────────────────────────── */}
+      <div className={`rounded-2xl border overflow-hidden ${bg} backdrop-blur-xl`}
+        style={{ borderColor: isDark ? "#374151" : "#e5e7eb" }}>
         <div className="p-5">
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2.5">
-              <div
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: `${themeColor}18`, border: `1px solid ${themeColor}35` }}
-              >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${themeColor}18`, border: `1px solid ${themeColor}35` }}>
                 <Zap size={15} style={{ color: themeColor }} />
               </div>
               <div>
                 <span className={`text-sm font-bold ${tb}`}>Manual Signal Generator</span>
-                <p className={`text-[10px] ${ts}`}>{sessionLabel}</p>
+                <p className={`text-[10px] ${ts}`}>{sessionLabel} • 19 Indicators</p>
               </div>
             </div>
-            <button
-              onClick={onSoundToggle}
-              className={`p-2 rounded-lg border transition-colors ${
-                soundEnabled
-                  ? "border-emerald-700/50 bg-emerald-950/20 text-emerald-400"
-                  : isDark ? "border-gray-700/40 bg-gray-900/20 text-gray-600" : "border-gray-200 bg-gray-50 text-gray-400"
-              }`}
-              title={soundEnabled ? "Mute sounds" : "Enable sounds"}
-            >
+            <button onClick={onSoundToggle}
+              className={`p-2 rounded-lg border transition-colors ${soundEnabled ? "border-emerald-700/50 bg-emerald-950/20 text-emerald-400" : isDark ? "border-gray-700/40 bg-gray-900/20 text-gray-600" : "border-gray-200 bg-gray-50 text-gray-400"}`}
+              title={soundEnabled ? "Mute sounds" : "Enable sounds"}>
               {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
             </button>
           </div>
 
-          {/* Access denied */}
+          {/* Access denied banner */}
           {!isAllowed && (
             <div className="flex items-center gap-3 p-3 rounded-xl bg-red-950/20 border border-red-800/30 mb-4">
               <AlertTriangle size={15} className="text-red-400 flex-shrink-0" />
               <div>
                 <p className="text-sm font-bold text-red-400">Access Pending</p>
-                <p className="text-xs text-red-500/70">Contact admin to get signal access.</p>
+                <p className="text-xs text-red-500/70">Your account is awaiting admin approval. Contact admin.</p>
               </div>
             </div>
           )}
 
-          {/* Daily usage */}
+          {/* Daily usage bar */}
           <div className="mb-4 space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className={ts}>Daily Signals Used</span>
-              <span
-                className="font-bold"
-                style={{ color: limitReached ? "#ff4466" : usagePct > 70 ? "#FFD700" : themeColor }}
-              >
-                {signalsUsed}/{signalLimit}
+              <span className="font-bold" style={{ color: limitReached ? "#ff4466" : usagePct > 70 ? "#FFD700" : themeColor }}>
+                {signalsUsed} / {signalLimit}
               </span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? "#1f2937" : "#e5e7eb" }}>
-              <div
-                className="h-full rounded-full transition-all duration-500"
+              <div className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${usagePct}%`,
-                  background: limitReached ? "#ff4466" : usagePct > 70 ? "#FFD700" : `linear-gradient(90deg, ${themeColor}80, ${themeColor})`,
-                }}
-              />
+                  background: limitReached ? "#ff4466" : usagePct > 70 ? "linear-gradient(90deg,#FFD70080,#FFD700)" : `linear-gradient(90deg, ${themeColor}80, ${themeColor})`,
+                }} />
             </div>
-            {!limitReached && <p className={`text-[10px] ${ts}`}>{dailyLeft} signals remaining today</p>}
+            {!limitReached && isAllowed && (
+              <p className={`text-[10px] ${ts}`}>{dailyLeft} signal{dailyLeft !== 1 ? "s" : ""} remaining today</p>
+            )}
           </div>
 
-          {/* Next candle info */}
-          <div
-            className="flex items-center gap-3 p-3 rounded-xl border mb-4"
-            style={{ borderColor: `${themeColor}25`, background: `${themeColor}05` }}
-          >
-            <Clock size={13} style={{ color: themeColor }} />
-            <div className="flex-1 min-w-0">
-              <p className={`text-[10px] ${ts}`}>
-                Candle closes in <span className="text-yellow-400 font-bold">{nextMinuteSecs}s</span>
-              </p>
-              <p className={`text-[10px] ${ts} truncate`}>
-                Entry: <span style={{ color: themeColor }} className="font-bold">{formatBDLocalTime(nextCandleTime)}</span> BDT
-                {" "}• Expiry: <span className="text-cyan-400 font-bold">{formatBDLocalTime(expiryTimeDt)}</span>
-              </p>
+          {/* ── Live candle countdown card ─────────────────────────────── */}
+          <div className="rounded-xl border mb-4 overflow-hidden"
+            style={{ borderColor: `${themeColor}28`, background: isDark ? `${themeColor}06` : `${themeColor}04` }}>
+            <div className="flex items-stretch">
+              {/* Countdown ring */}
+              <div className="flex items-center justify-center p-4 border-r" style={{ borderColor: `${themeColor}20`, minWidth: 88 }}>
+                <div className="relative w-14 h-14">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 56 56">
+                    <circle cx="28" cy="28" r="24" fill="none" strokeWidth="3"
+                      stroke={isDark ? "#1f2937" : "#e5e7eb"} />
+                    <circle cx="28" cy="28" r="24" fill="none" strokeWidth="3"
+                      stroke={countdownColor} strokeLinecap="round"
+                      strokeDasharray={`${2 * Math.PI * 24}`}
+                      strokeDashoffset={`${2 * Math.PI * 24 * (1 - ringPct / 100)}`}
+                      style={{ transition: "stroke-dashoffset 0.9s linear, stroke 0.3s" }} />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-xl font-black tabular-nums leading-none" style={{ color: countdownColor }}>
+                      {candleInfo.secsLeft}
+                    </span>
+                    <span className="text-[8px] font-bold" style={{ color: countdownColor, opacity: 0.7 }}>sec</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Signal timing */}
+              <div className="flex-1 p-3 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Timer size={11} style={{ color: themeColor }} />
+                  <span className={`text-[10px] font-bold tracking-widest ${ts}`}>NEXT 1-MIN SIGNAL</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: themeColor, boxShadow: `0 0 5px ${themeColor}` }} />
+                    <div>
+                      <span className={`text-[9px] ${ts} block`}>ENTRY (next candle open)</span>
+                      <span className="text-xs font-black" style={{ color: themeColor }}>{fmtTime(candleInfo.entryTime)} BDT</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0 bg-cyan-400" style={{ boxShadow: "0 0 5px #00d4ff" }} />
+                    <div>
+                      <span className={`text-[9px] ${ts} block`}>EXPIRY (+1 min exactly)</span>
+                      <span className="text-xs font-black text-cyan-400">{fmtTime(candleInfo.expiryTime)} BDT</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <TrendingUp size={12} style={{ color: themeColor }} className="opacity-40 flex-shrink-0" />
+
+            {isUrgent && (
+              <div className="px-4 py-2 border-t flex items-center gap-2" style={{ borderColor: "#ff446630", background: "#ff446610" }}>
+                <div className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping flex-shrink-0" />
+                <span className="text-[10px] text-red-400 font-bold">Candle closing soon — get signal now!</span>
+              </div>
+            )}
           </div>
 
-          {/* Scanning progress */}
+          {/* Scan progress */}
           {processing && (
             <div className="flex items-center gap-3 p-3 rounded-xl border border-cyan-800/30 bg-cyan-950/10 mb-4">
               <Loader2 size={13} className="text-cyan-400 animate-spin flex-shrink-0" />
               <div className="flex-1">
-                <p className="text-xs text-cyan-400 font-medium">
-                  Analysing {scanningPair || "pairs"}...
-                </p>
+                <p className="text-xs text-cyan-400 font-medium">Analysing {scanningPair || "pairs"}...</p>
                 <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: isDark ? "#1f2937" : "#e5e7eb" }}>
                   <div className="h-full rounded-full animate-pulse" style={{ width: "65%", background: themeColor }} />
                 </div>
@@ -216,27 +258,23 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
             </div>
           )}
 
-          {/* Main button */}
+          {/* ── Main CTA button ──────────────────────────────────────── */}
           <button
             onClick={runManualScan}
             disabled={!canScan}
-            className="w-full flex items-center justify-center gap-2.5 py-4 rounded-xl font-black text-sm text-black transition-transform duration-150 hover:scale-[1.015] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+            className="w-full flex items-center justify-center gap-2.5 py-4 rounded-xl font-black text-sm text-black transition-all duration-200 hover:scale-[1.015] active:scale-[0.975] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
             style={{
               background: canScan
                 ? `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)`
                 : isDark ? "#374151" : "#9ca3af",
-              boxShadow: canScan ? `0 4px 28px ${themeColor}45, 0 0 50px ${themeColor}18` : "none",
+              boxShadow: canScan ? `0 4px 28px ${themeColor}45, 0 0 50px ${themeColor}18, inset 0 1px 0 rgba(255,255,255,0.2)` : "none",
             }}
           >
-            {processing ? (
-              <><Loader2 size={17} className="animate-spin" /> Analysing...</>
-            ) : limitReached ? (
-              "Daily Limit Reached"
-            ) : !isAllowed ? (
-              "⛔ Access Not Granted"
-            ) : (
-              <><Zap size={17} fill="currentColor" /> GET SIGNAL NOW</>
-            )}
+            {processing
+              ? <><Loader2 size={17} className="animate-spin" /> Analysing...</>
+              : limitReached ? "Daily Limit Reached"
+              : !isAllowed ? "⛔ Access Not Granted"
+              : <><Zap size={17} fill="currentColor" /> GET SIGNAL NOW</>}
           </button>
 
           {selectedPairs.length === 0 && isAllowed && (
@@ -246,37 +284,25 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
           )}
 
           <p className={`text-[10px] ${ts} text-center mt-3`}>
-            BB Primary · {sessionLabel} · 19 indicators · Price action · Market zones
+            BB Primary · {sessionLabel} · 19 indicators · 1-min binary
           </p>
         </div>
       </div>
 
-      {/* Signals List */}
+      {/* ── Signals List ──────────────────────────────────────────────────── */}
       {signals.length > 0 ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className={`text-sm font-bold ${tb}`}>
-              Signal History{" "}
-              <span className={`text-xs ${ts} font-normal`}>({signals.length})</span>
+              Signal History <span className={`text-xs ${ts} font-normal`}>({signals.length})</span>
             </h3>
             <div className="flex items-center gap-2">
-              <button
-                onClick={runManualScan}
-                disabled={!canScan}
-                className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors disabled:opacity-40 ${
-                  isDark ? "border-gray-800/40 text-gray-500 hover:text-gray-300 hover:border-gray-700/50" : "border-gray-200 text-gray-500 hover:text-gray-700"
-                }`}
-                title="Generate new signals"
-              >
-                <RefreshCw size={11} className={processing ? "animate-spin" : ""} />
-                New
+              <button onClick={runManualScan} disabled={!canScan}
+                className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors disabled:opacity-40 ${isDark ? "border-gray-800/40 text-gray-500 hover:text-gray-300 hover:border-gray-700/50" : "border-gray-200 text-gray-500 hover:text-gray-700"}`}>
+                <RefreshCw size={11} className={processing ? "animate-spin" : ""} /> New
               </button>
-              <button
-                onClick={handleClear}
-                className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
-                  isDark ? "border-gray-800/40 text-gray-600 hover:text-red-400 hover:border-red-800/40 hover:bg-red-950/10" : "border-gray-200 text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-500"
-                }`}
-              >
+              <button onClick={handleClear}
+                className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${isDark ? "border-gray-800/40 text-gray-600 hover:text-red-400 hover:border-red-800/40 hover:bg-red-950/10" : "border-gray-200 text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-500"}`}>
                 Clear
               </button>
             </div>
@@ -284,50 +310,29 @@ const ManualSignalPanel: React.FC<ManualSignalPanelProps> = memo(({
 
           <div className="space-y-3">
             {visibleSignals.map((signal, idx) => (
-              <div
-                key={signal.id}
-                style={{ animationDelay: `${idx * 0.035}s` }}
-                className="signal-enter"
-              >
-                <SignalCard
-                  signal={signal}
-                  themeColor={themeColor}
-                  isNew={newSignalIds.has(signal.id)}
-                  isDark={isDark}
-                />
+              <div key={signal.id} className="signal-enter" style={{ animationDelay: `${idx * 0.04}s` }}>
+                <SignalCard signal={signal} themeColor={themeColor} isNew={newSignalIds.has(signal.id)} isDark={isDark} />
               </div>
             ))}
           </div>
 
           {signals.length > 6 && (
-            <button
-              onClick={handleToggleShowAll}
-              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border text-xs transition-colors ${
-                isDark
-                  ? "border-gray-800/40 bg-gray-900/20 text-gray-500 hover:text-gray-300"
-                  : "border-gray-200 bg-gray-50 text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              {showAll
-                ? <><ChevronUp size={13} /> Show Less</>
-                : <><ChevronDown size={13} /> Show All {signals.length}</>}
+            <button onClick={handleToggleShowAll}
+              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border text-xs transition-colors ${isDark ? "border-gray-800/40 bg-gray-900/20 text-gray-500 hover:text-gray-300" : "border-gray-200 bg-gray-50 text-gray-500 hover:text-gray-700"}`}>
+              {showAll ? <><ChevronUp size={13} /> Show Less</> : <><ChevronDown size={13} /> Show All {signals.length}</>}
             </button>
           )}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div
-            className="w-20 h-20 rounded-2xl flex items-center justify-center mb-5 border"
-            style={{ borderColor: `${themeColor}30`, background: `${themeColor}08` }}
-          >
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-5 border"
+            style={{ borderColor: `${themeColor}30`, background: `${themeColor}08` }}>
             <Zap size={32} style={{ color: themeColor, opacity: 0.35 }} />
           </div>
           <p className={`${tb} font-semibold text-base`}>Ready to Analyse</p>
           <p className={`${ts} text-sm mt-1.5 max-w-xs`}>
-            {!isAllowed
-              ? "Access pending admin approval"
-              : limitReached
-              ? "Daily signal limit reached"
+            {!isAllowed ? "Access pending admin approval"
+              : limitReached ? "Daily signal limit reached"
               : "Click GET SIGNAL NOW to generate signals for your selected pairs"}
           </p>
         </div>

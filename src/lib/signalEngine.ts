@@ -549,11 +549,13 @@ export function generateSignal(pair: string, candles: CandleData[]): Signal | nu
   const roundedConf = Math.round(confidence);
   const strength: SignalStrength = roundedConf >= 84 ? "STRONG" : roundedConf >= 72 ? "MODERATE" : "WEAK";
 
-  // ── Bangladesh timezone entry/expiry ──────────────────────────────────────
+  // ── Bangladesh timezone entry/expiry (exact 1-minute future candle) ────────
   const now = new Date();
   const bdNow = getBangladeshTime();
   const secondsLeft = 60 - bdNow.getSeconds();
+  // Entry = next candle open (exact minute boundary)
   const nextCandleOpenBD = new Date(bdNow.getTime() + secondsLeft * 1000);
+  // Expiry = EXACTLY 1 minute after entry (binary option expires at next candle close)
   const expiryBD = new Date(nextCandleOpenBD.getTime() + 60 * 1000);
 
   const liqSuffix = liquidity.liquidityType !== "None" ? ` • ${liquidity.liquidityType}` : "";
@@ -686,11 +688,12 @@ export function generateDemoSignal(pair: string): Signal {
     { name: "Candle Power", value: `${candlePwr}% body`, signal: s, weight: p.candlePowerWeight },
   ];
 
-  const now = new Date();
-  const bdNow = getBangladeshTime();
-  const secondsLeft = 60 - bdNow.getSeconds();
-  const nextCandleOpenBD = new Date(bdNow.getTime() + secondsLeft * 1000);
-  const expiryBD = new Date(nextCandleOpenBD.getTime() + 60 * 1000);
+  // Precise entry & expiry in BDT
+  const now2 = new Date();
+  const bdNow2 = getBangladeshTime();
+  const secsLeft2 = 60 - bdNow2.getSeconds();
+  const nextCandle2 = new Date(bdNow2.getTime() + secsLeft2 * 1000);
+  const expiry2 = new Date(nextCandle2.getTime() + 60 * 1000);
 
   return {
     id: generateId(),
@@ -698,12 +701,12 @@ export function generateDemoSignal(pair: string): Signal {
     direction,
     strength,
     confidence,
-    timestamp: now,
+    timestamp: now2,
     expiry: "1 Min",
     indicators,
     sessionName: `${p.label} • ${p.strategy}`,
-    entryTime: formatBDTime(nextCandleOpenBD) + " BDT",
-    expiryTime: formatBDTime(expiryBD) + " BDT",
+    entryTime: formatBDTime(nextCandle2) + " BDT",
+    expiryTime: formatBDTime(expiry2) + " BDT",
     rsi: rsiVal,
     trend: direction === "CALL" ? "UPTREND" : "DOWNTREND",
     pattern: `${patternName} • ${liqType}${bbSqueeze ? " • BB Squeeze" : ""}${bbBreakout ? ` • BB ${bbBreakout}` : ""}`,
